@@ -1,15 +1,21 @@
 package com.openclassrooms.tourguide;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import gpsUtil.location.Attraction;
+import gpsUtil.location.Location;
 import gpsUtil.location.VisitedLocation;
 
+import com.openclassrooms.tourguide.dto.NearbyAttractionDto;
+import com.openclassrooms.tourguide.service.RewardsService;
 import com.openclassrooms.tourguide.service.TourGuideService;
 import com.openclassrooms.tourguide.user.User;
 import com.openclassrooms.tourguide.user.UserReward;
@@ -19,6 +25,9 @@ import tripPricer.Provider;
 @RestController
 public class TourGuideController {
 
+	@Autowired
+    RewardsService rewardsService;
+    
 	@Autowired
 	TourGuideService tourGuideService;
 	
@@ -41,10 +50,38 @@ public class TourGuideController {
         // The distance in miles between the user's location and each of the attractions.
         // The reward points for visiting each Attraction.
         //    Note: Attraction reward points can be gathered from RewardsCentral
-    @RequestMapping("/getNearbyAttractions") 
-    public List<Attraction> getNearbyAttractions(@RequestParam String userName) {
-    	VisitedLocation visitedLocation = tourGuideService.getUserLocation(getUser(userName));
-    	return tourGuideService.getNearByAttractions(visitedLocation);
+    @GetMapping("/getNearbyAttractions")
+    public List<NearbyAttractionDto> getNearbyAttractions(@RequestParam String userName) {
+
+        //Recupere l'utilisateur
+        User user = tourGuideService.getUser(userName);
+
+        // Dernier emplacement connu de l'utilisateur
+        VisitedLocation userLocation = tourGuideService.getUserLocation(user);
+
+        // Rzcupzre toutes les attractions
+        List<Attraction> allAttractions = tourGuideService.getAllAttractions();
+        System.out.println("Attractions count = " + allAttractions.size());
+        // Calcule la distance entre chaque attraction et la position de l'utilisateur
+        return allAttractions.stream()
+                .map(attraction -> {
+                	double distance = rewardsService.getDistance(attraction, userLocation.location);
+                    int rewardPoints = rewardsService.getRewardPoints(attraction, user);
+                    return new NearbyAttractionDto(
+                    	    attraction.attractionName,
+                    	    attraction.latitude,
+                    	    attraction.longitude,
+                    	    userLocation.location.latitude,
+                    	    userLocation.location.longitude,
+                    	    distance,
+                    	    rewardPoints
+                    	);
+                })
+                // Trie par distance (ordre croissant)
+                .sorted(Comparator.comparingDouble(NearbyAttractionDto::getDistanceMiles))
+                // Garde les 5 premieres
+                .limit(5)
+                .collect(Collectors.toList());
     }
     
     @RequestMapping("/getRewards") 
