@@ -1,6 +1,11 @@
 package com.openclassrooms.tourguide.service;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
@@ -37,18 +42,32 @@ public class RewardsService {
 	}
 	
 	public void calculateRewards(User user) {
-		List<VisitedLocation> userLocations = user.getVisitedLocations();
-		List<Attraction> attractions = gpsUtil.getAttractions();
+		final List<VisitedLocation> visitedSnapshot = List.copyOf(user.getVisitedLocations());
+	    final List<Attraction> attractions = gpsUtil.getAttractions();
 		
-		for(VisitedLocation visitedLocation : userLocations) {
-			for(Attraction attraction : attractions) {
-				if(user.getUserRewards().stream().filter(r -> r.attraction.attractionName.equals(attraction.attractionName)).count() == 0) {
-					if(nearAttraction(visitedLocation, attraction)) {
-						user.addUserReward(new UserReward(visitedLocation, attraction, getRewardPoints(attraction, user)));
-					}
-				}
-			}
-		}
+	    final Set<UUID> rewardedIds = user.getUserRewards().stream()
+	            .map(r -> r.getAttraction().attractionId)   // <-- utiliser l'ID
+	            .collect(Collectors.toCollection(HashSet::new));
+	    
+	    final List<UserReward> toAdd = new ArrayList<>();
+	    
+	    for (VisitedLocation visited : visitedSnapshot) {
+	        for (Attraction attraction : attractions) {
+	            if (!nearAttraction(visited, attraction)) continue;
+
+	            // déjà récompensé (avant OU plus tôt dans CE run) ? on saute
+	            if (rewardedIds.contains(attraction.attractionId)) continue;
+
+	            int points = rewardsCentral.getAttractionRewardPoints(attraction.attractionId, user.getUserId());
+
+	            // marquer tout de suite pour bloquer les doublons intra-run
+	            rewardedIds.add(attraction.attractionId);
+	            toAdd.add(new UserReward(visited, attraction, points));
+	        }
+	        }
+	    if (!toAdd.isEmpty()) {
+	    	user.getUserRewards().addAll(toAdd);
+	    }
 	}
 	
 	public boolean isWithinAttractionProximity(Attraction attraction, Location location) {
@@ -59,7 +78,7 @@ public class RewardsService {
 		return getDistance(attraction, visitedLocation.location) > proximityBuffer ? false : true;
 	}
 	
-	private int getRewardPoints(Attraction attraction, User user) {
+	public int getRewardPoints(Attraction attraction, User user) {
 		return rewardsCentral.getAttractionRewardPoints(attraction.attractionId, user.getUserId());
 	}
 	
@@ -76,5 +95,13 @@ public class RewardsService {
         double statuteMiles = STATUTE_MILES_PER_NAUTICAL_MILE * nauticalMiles;
         return statuteMiles;
 	}
+	
+	public double getDistance(Attraction attraction, Location location) {
+        return getDistance(new Location(attraction.latitude, attraction.longitude), location);
+    }
+
+    public double getDistance(Attraction attraction, VisitedLocation visitedLocation) {
+        return getDistance(attraction, visitedLocation.location);
+    }
 
 }
