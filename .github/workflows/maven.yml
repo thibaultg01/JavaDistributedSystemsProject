@@ -30,6 +30,12 @@ jobs:
         distribution: "temurin"
         cache: maven
 
+    - name: Install JARs to local Maven repo
+      run: |
+        set -e
+        mvn install:install-file -Dfile=TourGuide/libs/gpsUtil.jar        -DgroupId=gpsUtil       -DartifactId=gpsUtil       -Dversion=1.0.0 -Dpackaging=jar
+        mvn install:install-file -Dfile=TourGuide/libs/RewardCentral.jar  -DgroupId=rewardCentral -DartifactId=rewardCentral -Dversion=1.0.0 -Dpackaging=jar
+        mvn install:install-file -Dfile=TourGuide/libs/TripPricer.jar     -DgroupId=tripPricer    -DartifactId=tripPricer    -Dversion=1.0.0 -Dpackaging=jar
 
     - name: Run unit tests (exclude performance tests)
       working-directory: ./TourGuide
