@@ -16,6 +16,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -31,18 +34,23 @@ import gpsUtil.location.VisitedLocation;
 import tripPricer.Provider;
 import tripPricer.TripPricer;
 
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
 @Service
 public class TourGuideService {
 	private Logger logger = LoggerFactory.getLogger(TourGuideService.class);
 	private final GpsUtil gpsUtil;
 	private final RewardsService rewardsService;
+    private final ExecutorService rewardsExecutor;
 	private final TripPricer tripPricer = new TripPricer();
 	public final Tracker tracker;
 	boolean testMode = true;
 
-	public TourGuideService(GpsUtil gpsUtil, RewardsService rewardsService) {
+	public TourGuideService(GpsUtil gpsUtil, RewardsService rewardsService, ExecutorService rewardsExecutor) {
 		this.gpsUtil = gpsUtil;
 		this.rewardsService = rewardsService;
+		this.rewardsExecutor = buildDefaultExecutor();
 		
 		Locale.setDefault(Locale.US);
 
@@ -55,14 +63,35 @@ public class TourGuideService {
 		tracker = new Tracker(this);
 		addShutDownHook();
 	}
+	
+	public TourGuideService(GpsUtil gpsUtil, RewardsService rewardsService) {
+        this(gpsUtil, rewardsService, buildDefaultExecutor());
+    }
+	
+	private static ExecutorService buildDefaultExecutor() {
+        int cores = Runtime.getRuntime().availableProcessors();
+        return new ThreadPoolExecutor(
+            cores * 4,                 // corePoolSize
+            cores * 8,                 // maxPoolSize
+            60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(100_000),
+            r -> {                     
+                Thread t = new Thread(r);
+                t.setName("rewards-" + t.getId());
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+    }
+	
+	
 
 	public List<UserReward> getUserRewards(User user) {
 		return user.getUserRewards();
 	}
 	
 	public List<Attraction> getNearByAttractions(VisitedLocation visitedLocation) {
-	    // NE PAS filtrer par proximity buffer !
-	    // On trie toutes les attractions par distance croissante et on en prend 5.
 	    return gpsUtil.getAttractions().stream()
 	            .sorted(Comparator.comparingDouble(a ->
 	                    rewardsService.getDistance(
@@ -179,5 +208,30 @@ public class TourGuideService {
 		LocalDateTime localDateTime = LocalDateTime.now().minusDays(new Random().nextInt(30));
 		return Date.from(localDateTime.toInstant(ZoneOffset.UTC));
 	}
+	
+	public void trackLocationsHighVolume(List<User> users) {
+	    List<CompletableFuture<Void>> tasks = users.stream()
+	        .map(user ->
+	            CompletableFuture
+	                .supplyAsync(() -> gpsUtil.getUserLocation(user.getUserId()))
+	                .thenAccept(visitedLocation -> {
+	                    user.addToVisitedLocations(visitedLocation);
+	                    rewardsService.calculateRewards(user);
+	                })
+	        )
+	        .collect(Collectors.toList());
+
+	    CompletableFuture.allOf(tasks.toArray(new CompletableFuture[0])).join();
+	}
+	
+	public void calculateRewardsHighVolume(List<User> users) {
+        List<CompletableFuture<Void>> jobs = users.stream()
+            .map(u -> CompletableFuture.runAsync(
+                () -> rewardsService.calculateRewards(u),
+                rewardsExecutor))
+            .toList();
+
+        CompletableFuture.allOf(jobs.toArray(CompletableFuture[]::new)).join();
+    }
 
 }
