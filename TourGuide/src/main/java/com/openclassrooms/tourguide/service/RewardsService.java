@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-
 import org.springframework.stereotype.Service;
 
 import gpsUtil.GpsUtil;
@@ -14,6 +13,7 @@ import gpsUtil.location.Attraction;
 import gpsUtil.location.Location;
 import gpsUtil.location.VisitedLocation;
 import rewardCentral.RewardCentral;
+
 import com.openclassrooms.tourguide.user.User;
 import com.openclassrooms.tourguide.user.UserReward;
 
@@ -27,7 +27,6 @@ public class RewardsService {
 	private int attractionProximityRange = 200;
 	private final GpsUtil gpsUtil;
 	private final RewardCentral rewardsCentral;
-	
 	public RewardsService(GpsUtil gpsUtil, RewardCentral rewardCentral) {
 		this.gpsUtil = gpsUtil;
 		this.rewardsCentral = rewardCentral;
@@ -55,12 +54,10 @@ public class RewardsService {
 	        for (Attraction attraction : attractions) {
 	            if (!nearAttraction(visited, attraction)) continue;
 
-	            // déjà récompensé (avant OU plus tôt dans CE run) ? on saute
 	            if (rewardedIds.contains(attraction.attractionId)) continue;
 
 	            int points = rewardsCentral.getAttractionRewardPoints(attraction.attractionId, user.getUserId());
 
-	            // marquer tout de suite pour bloquer les doublons intra-run
 	            rewardedIds.add(attraction.attractionId);
 	            toAdd.add(new UserReward(visited, attraction, points));
 	        }

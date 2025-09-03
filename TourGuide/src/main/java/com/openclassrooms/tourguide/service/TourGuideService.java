@@ -24,13 +24,14 @@ import java.util.stream.IntStream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import gpsUtil.GpsUtil;
 import gpsUtil.location.Attraction;
 import gpsUtil.location.Location;
 import gpsUtil.location.VisitedLocation;
-
+import jakarta.annotation.PreDestroy;
 import tripPricer.Provider;
 import tripPricer.TripPricer;
 
@@ -42,16 +43,17 @@ public class TourGuideService {
 	private Logger logger = LoggerFactory.getLogger(TourGuideService.class);
 	private final GpsUtil gpsUtil;
 	private final RewardsService rewardsService;
-    private final ExecutorService rewardsExecutor;
+	private final ExecutorService rewardsExecutor;
 	private final TripPricer tripPricer = new TripPricer();
 	public final Tracker tracker;
 	boolean testMode = true;
 
+	@Autowired
 	public TourGuideService(GpsUtil gpsUtil, RewardsService rewardsService, ExecutorService rewardsExecutor) {
 		this.gpsUtil = gpsUtil;
 		this.rewardsService = rewardsService;
-		this.rewardsExecutor = buildDefaultExecutor();
-		
+		this.rewardsExecutor = rewardsExecutor;
+
 		Locale.setDefault(Locale.US);
 
 		if (testMode) {
@@ -63,48 +65,42 @@ public class TourGuideService {
 		tracker = new Tracker(this);
 		addShutDownHook();
 	}
-	
+
 	public TourGuideService(GpsUtil gpsUtil, RewardsService rewardsService) {
-        this(gpsUtil, rewardsService, buildDefaultExecutor());
-    }
-	
+		this(gpsUtil, rewardsService, buildDefaultExecutor());
+	}
+
 	private static ExecutorService buildDefaultExecutor() {
-        int cores = Runtime.getRuntime().availableProcessors();
-        return new ThreadPoolExecutor(
-            cores * 4,                 // corePoolSize
-            cores * 8,                 // maxPoolSize
-            60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(100_000),
-            r -> {                     
-                Thread t = new Thread(r);
-                t.setName("rewards-" + t.getId());
-                t.setDaemon(true);
-                return t;
-            },
-            new ThreadPoolExecutor.CallerRunsPolicy()
-        );
-    }
-	
-	
+		int cores = Runtime.getRuntime().availableProcessors();
+		return new ThreadPoolExecutor(cores * 4, cores * 8, 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(100_000),
+				r -> {
+					Thread t = new Thread(r);
+					t.setName("rewards-" + t.getId());
+					t.setDaemon(true);
+					return t;
+				}, new ThreadPoolExecutor.CallerRunsPolicy());
+	}
+
+	/*
+	 * @PreDestroy public void shutdown() { rewardsExecutor.shutdown(); try { if
+	 * (!rewardsExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+	 * rewardsExecutor.shutdownNow(); } } catch (InterruptedException e) {
+	 * rewardsExecutor.shutdownNow(); Thread.currentThread().interrupt(); } }
+	 */
 
 	public List<UserReward> getUserRewards(User user) {
 		return user.getUserRewards();
 	}
-	
+
 	public List<Attraction> getNearByAttractions(VisitedLocation visitedLocation) {
-	    return gpsUtil.getAttractions().stream()
-	            .sorted(Comparator.comparingDouble(a ->
-	                    rewardsService.getDistance(
-	                            new gpsUtil.location.Location(a.latitude, a.longitude),
-	                            visitedLocation.location
-	                    )
-	            ))
-	            .limit(5)
-	            .collect(java.util.stream.Collectors.toList());
+		return gpsUtil.getAttractions().stream()
+				.sorted(Comparator.comparingDouble(a -> rewardsService
+						.getDistance(new gpsUtil.location.Location(a.latitude, a.longitude), visitedLocation.location)))
+				.limit(5).collect(java.util.stream.Collectors.toList());
 	}
-	
+
 	public List<Attraction> getAllAttractions() {
-	    return gpsUtil.getAttractions();
+		return gpsUtil.getAttractions();
 	}
 
 	public VisitedLocation getUserLocation(User user) {
@@ -142,17 +138,6 @@ public class TourGuideService {
 		rewardsService.calculateRewards(user);
 		return visitedLocation;
 	}
-
-	/*public List<Attraction> getNearByAttractions(VisitedLocation visitedLocation) {
-		List<Attraction> nearbyAttractions = new ArrayList<>();
-		for (Attraction attraction : gpsUtil.getAttractions()) {
-			if (rewardsService.isWithinAttractionProximity(attraction, visitedLocation.location)) {
-				nearbyAttractions.add(attraction);
-			}
-		}
-
-		return nearbyAttractions;
-	}*/
 
 	private void addShutDownHook() {
 		Runtime.getRuntime().addShutdownHook(new Thread() {
@@ -208,30 +193,23 @@ public class TourGuideService {
 		LocalDateTime localDateTime = LocalDateTime.now().minusDays(new Random().nextInt(30));
 		return Date.from(localDateTime.toInstant(ZoneOffset.UTC));
 	}
-	
+
 	public void trackLocationsHighVolume(List<User> users) {
-	    List<CompletableFuture<Void>> tasks = users.stream()
-	        .map(user ->
-	            CompletableFuture
-	                .supplyAsync(() -> gpsUtil.getUserLocation(user.getUserId()))
-	                .thenAccept(visitedLocation -> {
-	                    user.addToVisitedLocations(visitedLocation);
-	                    rewardsService.calculateRewards(user);
-	                })
-	        )
-	        .collect(Collectors.toList());
+		List<CompletableFuture<Void>> tasks = users.stream().map(user -> CompletableFuture
+				.supplyAsync(() -> gpsUtil.getUserLocation(user.getUserId())).thenAccept(visitedLocation -> {
+					user.addToVisitedLocations(visitedLocation);
+					rewardsService.calculateRewards(user);
+				})).collect(Collectors.toList());
 
-	    CompletableFuture.allOf(tasks.toArray(new CompletableFuture[0])).join();
+		CompletableFuture.allOf(tasks.toArray(new CompletableFuture[0])).join();
 	}
-	
-	public void calculateRewardsHighVolume(List<User> users) {
-        List<CompletableFuture<Void>> jobs = users.stream()
-            .map(u -> CompletableFuture.runAsync(
-                () -> rewardsService.calculateRewards(u),
-                rewardsExecutor))
-            .toList();
 
-        CompletableFuture.allOf(jobs.toArray(CompletableFuture[]::new)).join();
-    }
+	public void calculateRewardsHighVolume(List<User> users) {
+		List<CompletableFuture<Void>> jobs = users.stream()
+				.map(u -> CompletableFuture.runAsync(() -> rewardsService.calculateRewards(u), rewardsExecutor))
+				.toList();
+
+		CompletableFuture.allOf(jobs.toArray(CompletableFuture[]::new)).join();
+	}
 
 }
